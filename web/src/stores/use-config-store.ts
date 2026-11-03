@@ -341,7 +341,10 @@ export function upsertChannelCredentials(
             return { status: "updated", channelName: existing.name, config };
         }
         const updated = { ...existing, baseUrl, ...(apiKey ? { apiKey } : {}) };
-        const channels = config.channels.map((channel, index) => (index === matchingIndex ? updated : channel));
+        // [CUSTOM] 2026-11-04 同时移除内置默认渠道
+        const channels = config.channels
+            .filter((channel) => channel.id !== "default")
+            .map((channel) => (channel.id === existing.id ? updated : channel));
         return { status: "updated", channelName: existing.name, config: { ...config, channels } };
     }
 
@@ -352,7 +355,10 @@ export function upsertChannelCredentials(
         apiFormat: "openai",
         models: [],
     });
-    return { status: "created", channelName: channel.name, config: { ...config, channels: [...config.channels, channel] } };
+    // [CUSTOM] 2026-11-04 导入渠道时移除画布内置的「默认渠道」（OpenAI 官方），
+    // 避免用户误用不可用的默认渠道，只保留我们导入的渠道。
+    const keptChannels = config.channels.filter((item) => item.id !== "default");
+    return { status: "created", channelName: channel.name, config: { ...config, channels: [...keptChannels, channel] } };
 }
 
 function isHttpBaseUrl(baseUrl: string) {
