@@ -736,7 +736,10 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 ...(background ? { background } : {}),
                 // gpt-image models reject response_format; they always return b64.
                 ...(/gpt-image/.test(requestConfig.model) ? {} : { response_format: "b64_json" }),
-                output_format: IMAGE_OUTPUT_FORMAT,
+                // [CUSTOM] 2026-11-04 只有 gpt-image 系列接受 output_format；
+                // 其它上游（agnes/nano-banana/grok 等）会因该参数直接 400，
+                // 因此仅对 gpt-image 发送，让其余模型按上游默认格式返回。
+                ...(/gpt-image/.test(requestConfig.model) ? { output_format: IMAGE_OUTPUT_FORMAT } : {}),
             },
             {
                 headers: aiHeaders(requestConfig, "application/json"),
@@ -795,7 +798,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (!/gpt-image/.test(requestConfig.model)) {
         formData.set("response_format", "b64_json");
     }
-    formData.set("output_format", IMAGE_OUTPUT_FORMAT);
+    // [CUSTOM] 2026-11-04 仅 gpt-image 系列支持 output_format（其它上游 400）
+    if (/gpt-image/.test(requestConfig.model)) formData.set("output_format", IMAGE_OUTPUT_FORMAT);
     if (quality) {
         formData.set("quality", quality);
     }

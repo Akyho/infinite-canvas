@@ -146,7 +146,38 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
     throw new Error(apiText("noPlayableVideo"));
 }
 
+function resolveVideoRequestFormat(config: AiConfig) {
+    const mode = (config.videoRequestFormat || "auto").toLowerCase();
+    if (mode === "json" || mode === "multipart") return mode;
+    // 自动：指向本站（new-api）时用 JSON，其它上游沿用 multipart
+    return /yjs\.im/i.test(config.baseUrl || "") ? "json" : "multipart";
+}
+
+async function createJsonVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const dataUrls = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const ratio = inferVideoRatio(config.size || "16:9");
+    const payload: Record<string, unknown> = {
+        model: modelOptionName(model),
+        prompt,
+        resolution: normalizeVideoResolution(config.vquality),
+    };
+    const seconds = Number(normalizeVideoSeconds(config.videoSeconds));
+    if (Number.isFinite(seconds) && seconds > 0) payload.duration_seconds = seconds;
+    if (ratio && ratio !== "auto") payload.aspect_ratio = ratio;
+    if (dataUrls.length) payload.media_inputs = dataUrls.map((url) => ({ kind: "image", role: "reference", url }));
+    try {
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        if (!created.id) throw new Error(apiText("noVideoTaskId"));
+        return { id: created.id, provider: "openai", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+    }
+}
+
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    if (resolveVideoRequestFormat(config) === "json") {
+        return createJsonVideoTask(config, model, prompt, references, options);
+    }
     const images = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
